@@ -1,0 +1,21 @@
+# package directories
+node_modules
+jspm_packages
+
+# edtors
+.code
+.idea
+.vscode
+
+# Serverless directories
+.serverless
+.dynamodb
+
+# esbuild directories
+.esbuild
+
+# Environment variables
+.env
+
+# Output
+dist
