@@ -1,18 +1,36 @@
 service: hymns-aws
-frameworkVersion: '3'
+frameworkVersion: "3"
+
+plugins:
+  - serverless-plugin-ifelse
+  - serverless-dynamodb-local
+  - serverless-apigateway-service-proxy
+  - serverless-offline-sqs
+  - serverless-offline
 
 custom:
-  tableName: 'hymns-table-${sls:stage}'
+  tableName: "hymns-table-${sls:stage}"
   stage: ${opt:stage, "dev"}
   dynamodb:
     stages:
       - ${sls:stage}
     start:
       migrate: true
-
-plugins:
-  - serverless-dynamodb-local
-  - serverless-offline
+  serverless-offline-sqs:
+    autoCreate: true
+    endpoint: http://0.0.0.0:9324
+    accessKeyId: root
+    secretAccessKey: root
+  apiGatewayServiceProxies:
+    - sqs:
+        path: /hymn
+        method: post
+        queueName: { "Fn::GetAtt": ["HymnsQueue", "QueueName"] }
+        cors: true
+  serverlessIfElse:
+    - If: '"${opt:stage}" == "local"'
+      Exclude:
+        - resources.Resources.HymnsQueue.Properties.RedrivePolicy
 
 provider:
   name: aws
@@ -28,19 +46,48 @@ provider:
             - dynamodb:PutItem
             - dynamodb:UpdateItem
             - dynamodb:DeleteItem
+            - sqs:DeleteMessage
+            - sqs:GetQueueAttributes
+            - sqs:ReceiveMessage
+            - sqs:SendMessage
           Resource:
-            - Fn::GetAtt: [ HymnsTable, Arn ]
+            - Fn::GetAtt: [HymnsTable, Arn]
+            - Fn::GetAtt: [HymnsQueue, Arn]
+            - Fn::GetAtt: [DeadHymnsQueue, Arn]
   environment:
     HYMNS_TABLE: ${self:custom.tableName}
 
 functions:
-  api:
-    handler: dist/index.handler
+  getHymns:
+    handler: dist/functions/hymns/get-hymns.handler
     events:
-      - httpApi: '*'
+      - http:
+          path: /hymn
+          method: GET
+          cors: true
+
+  createHymn:
+    handler: dist/functions/hymns/create-hymn.handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt: [HymnsQueue, Arn]
 
 resources:
   Resources:
+    DeadHymnsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: "DeadHymnsQueue"
+    HymnsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: "HymnsQueue"
+        RedrivePolicy:
+          maxReceiveCount: 3
+          deadLetterTargetArn:
+            Fn::GetAtt: [DeadHymnsQueue, Arn]
+
     HymnsTable:
       Type: AWS::DynamoDB::Table
       Properties:
